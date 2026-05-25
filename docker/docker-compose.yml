@@ -1,0 +1,107 @@
+# Docker Compose - Full Stack Setup
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: pred_maintenance_db
+    environment:
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: app_password
+      POSTGRES_DB: predictive_maintenance
+      TZ: UTC
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_user -d predictive_maintenance"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pred_maintenance_net
+
+  # pgAdmin (Database Management UI)
+  pgadmin:
+    image: dpage/pgadmin4:7
+    container_name: pred_maintenance_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@maintenance.local
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - pred_maintenance_net
+    profiles:
+      - dev
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: pred_maintenance_api
+    environment:
+      DATABASE_URL: postgresql://app_user:app_password@postgres:5432/predictive_maintenance
+      ENVIRONMENT: production
+      JWT_SECRET_KEY: your-super-secret-key-change-this
+      DEBUG: false
+      AUTO_CREATE_TABLES: false
+      AUTO_SEED_DATA: true
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../backend/app:/app/app
+    networks:
+      - pred_maintenance_net
+    restart: unless-stopped
+
+  # React Frontend
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api/v1
+    container_name: pred_maintenance_ui
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - pred_maintenance_net
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy (Optional - for production-like setup)
+  nginx:
+    image: nginx:alpine
+    container_name: pred_maintenance_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - pred_maintenance_net
+    profiles:
+      - prod
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  pred_maintenance_net:
+    driver: bridge
